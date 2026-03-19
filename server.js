@@ -24,7 +24,7 @@ app.post("/api/ai/chat", async (req, res) => {
   const apiKey = process.env.OPENROUTER_API_KEY;
   if (!apiKey) return res.status(500).json({ error: "Server misconfigured: API key not set." });
 
-  const { messages, maxTokens = 10000 } = req.body;
+  const { messages, maxTokens = 800 } = req.body;
   if (!messages || !Array.isArray(messages))
     return res.status(400).json({ error: "Invalid request." });
 
@@ -38,8 +38,8 @@ app.post("/api/ai/chat", async (req, res) => {
         "X-Title": "FitAI",
       },
       body: JSON.stringify({
-        model: "meta-llama/llama-3.3-70b-instruct:free",  // ✅ switched from arcee-ai/trinity-large-preview:free
-        max_tokens: Math.min(maxTokens, 8192), // ✅ gemma-3-27b supports up to 8192 output tokens
+        model: "meta-llama/llama-3.3-70b-instruct:free",
+        max_tokens: Math.min(maxTokens, 9192),
         messages: messages.map((m) => ({
           role: m.role,
           content: Array.isArray(m.content)
@@ -51,17 +51,15 @@ app.post("/api/ai/chat", async (req, res) => {
 
     if (!response.ok) {
       const err = await response.json().catch(() => ({}));
-      console.error("OpenRouter error:", JSON.stringify(err)); // ✅ log real error
-      return res
-        .status(response.status)
-        .json({ error: err?.error?.message || "AI API error" });
+      console.error("OpenRouter error:", JSON.stringify(err));
+      return res.status(response.status).json({ error: err?.error?.message || "AI API error" });
     }
 
     const data = await response.json();
     const text = data.choices?.[0]?.message?.content || "";
     res.json({ content: [{ text }] });
   } catch (err) {
-    console.error("AI service error:", err.message); // ✅ log real error
+    console.error("AI service error:", err.message);
     res.status(500).json({ error: err.message || "AI service unavailable." });
   }
 });
