@@ -5,6 +5,9 @@ const helmet = require("helmet");
 const app = express();
 const PORT = process.env.PORT || 3001;
 
+// ✅ trust Railway's proxy so express-rate-limit works correctly
+app.set("trust proxy", 1);
+
 app.use(helmet());
 app.use(express.json({ limit: "10mb" }));
 app.use(cors({ origin: "*" }));
@@ -38,8 +41,8 @@ app.post("/api/ai/chat", async (req, res) => {
         "X-Title": "FitAI",
       },
       body: JSON.stringify({
-        model: "meta-llama/llama-3.3-70b-instruct:free",
-        max_tokens: Math.min(maxTokens, 9192),
+        model: "deepseek/deepseek-r1:free",
+        max_tokens: Math.min(maxTokens, 2048),
         messages: messages.map((m) => ({
           role: m.role,
           content: Array.isArray(m.content)
