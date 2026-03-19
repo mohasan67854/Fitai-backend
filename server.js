@@ -38,7 +38,7 @@ app.post("/api/ai/chat", async (req, res) => {
         "X-Title": "FitAI",
       },
       body: JSON.stringify({
-        model: "google/gemma-3-27b-it:free",  // ✅ switched from arcee-ai/trinity-large-preview:free
+        model: "meta-llama/llama-3.3-70b-instruct:free",  // ✅ switched from arcee-ai/trinity-large-preview:free
         max_tokens: Math.min(maxTokens, 8192), // ✅ gemma-3-27b supports up to 8192 output tokens
         messages: messages.map((m) => ({
           role: m.role,
