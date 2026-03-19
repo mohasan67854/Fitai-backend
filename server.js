@@ -76,23 +76,75 @@ app.get("/health", (req, res) => {
 // Frontend sends: { messages: [...], maxTokens: 1000 }
 // Server adds the API key and forwards to Anthropic
 app.post("/api/ai/chat", async (req, res) => {
-  const apiKey = process.env.ANTHROPIC_API_KEY;
-
-  if (!apiKey) {
-    return res.status(500).json({ error: "Server misconfigured: API key not set. Contact support." });
-  }
+ const apiKey = process.env.GEMINI_API_KEY;
+if (!apiKey) {
+  return res.status(500).json({ error: "Server misconfigured: API key not set. Contact support." });
+}
 
   const { messages, maxTokens = 1000 } = req.body;
 
   if (!messages || !Array.isArray(messages) || messages.length === 0) {
     return res.status(400).json({ error: "Invalid request: messages array required." });
   }
-
-  // Basic content validation — don't let users abuse your key
-  const totalContentLength = JSON.stringify(messages).length;
-  if (totalContentLength > 500000) { // ~500KB limit
-    return res.status(400).json({ error: "Request too large." });
+const response = await fetch(
+  `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${apiKey}`,
+  {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      contents: messages.map(m => ({
+        role: m.role === "assistant" ? "model" : "user",
+        parts: m.content instanceof Array
+          ? m.content.map(c => c.type === "text" ? { text: c.text } : { inline_data: { mime_type: c.source?.media_type || "image/jpeg", data: c.source?.data } })
+          : [{ text: m.content }]
+      })),
+      generationConfig: { maxOutputTokens: Math.min(maxTokens, 2000) }
+    }),
   }
+);
+
+const response = await fetch(
+  `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${apiKey}`,
+  {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      contents: messages.map(m => ({
+        role: m.role === "assistant" ? "model" : "user",
+        parts: m.content instanceof Array
+          ? m.content.map(c => c.type === "text" ? { text: c.text } : { inline_data: { mime_type: c.source?.media_type || "image/jpeg", data: c.source?.data } })
+          : [{ text: m.content }]
+      })),
+      generationConfig: { maxOutputTokens: Math.min(maxTokens, 2000) }
+    }),
+  }
+);
+
+const data = await response.json();
+const text = data.candidates?.[0]?.content?.parts?.[0]?.text || "";
+res.json({ content: [{ text }] });
+return;
+  const response = await fetch(
+  `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${apiKey}`,
+  {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      contents: messages.map(m => ({
+        role: m.role === "assistant" ? "model" : "user",
+        parts: m.content instanceof Array
+          ? m.content.map(c => c.type === "text" ? { text: c.text } : { inline_data: { mime_type: c.source?.media_type || "image/jpeg", data: c.source?.data } })
+          : [{ text: m.content }]
+      })),
+      generationConfig: { maxOutputTokens: Math.min(maxTokens, 2000) }
+    }),
+  }
+);
+
+const data = await response.json();
+const text = data.candidates?.[0]?.content?.parts?.[0]?.text || "";
+res.json({ content: [{ text }] });
+return;
 
   try {
     const response = await fetch("https://api.anthropic.com/v1/messages", {
