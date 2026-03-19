@@ -37,7 +37,7 @@ app.post("/api/ai/chat", async (req, res) => {
         "X-Title": "FitAI",
       },
       body: JSON.stringify({
-        model: "trinity-large-preview:free",
+        model: "arcee-ai/trinity-large-preview:free",
         max_tokens: Math.min(maxTokens, 2000000),
         messages: messages.map(m => ({
           role: m.role,
