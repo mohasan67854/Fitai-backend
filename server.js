@@ -42,7 +42,7 @@ app.post("/api/ai/chat", async (req, res) => {
       },
       body: JSON.stringify({
         model: "google/gemma-3-27b-it:free",
-        max_tokens: Math.min(maxTokens, 2048),
+        max_tokens: Math.min(maxTokens, 204800),
         messages: messages.map((m) => ({
           role: m.role,
           content: Array.isArray(m.content)
