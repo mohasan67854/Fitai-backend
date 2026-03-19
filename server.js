@@ -39,9 +39,8 @@ const ALLOWED_ORIGINS = [
 ].filter(Boolean);
 
 app.use(cors({
-  origin: (origin, callback) => {
-    return callback(null, true);
-  },
+  origin: "*",
+  
   methods: ["POST", "GET"],
   allowedHeaders: ["Content-Type", "Authorization"],
 }));
