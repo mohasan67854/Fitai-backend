@@ -32,17 +32,15 @@ app.use(express.json({ limit: "10mb" })); // 10mb for base64 food images
 
 // ── CORS — only allow your frontend domain ────────────────────────────────────
 const ALLOWED_ORIGINS = [
-  "http://localhost:5173",          // Vite dev server
-  "http://localhost:3000",          // Create React App dev
-  process.env.FRONTEND_URL,        // Your deployed frontend URL (set in env vars)
+  "http://localhost:5173",
+  "http://localhost:3000",
+  process.env.FRONTEND_URL,
+  "https://fitai-psi.vercel.app",
 ].filter(Boolean);
 
 app.use(cors({
   origin: (origin, callback) => {
-    // Allow requests with no origin (mobile apps, curl, Postman)
-    if (!origin) return callback(null, true);
-    if (ALLOWED_ORIGINS.includes(origin)) return callback(null, true);
-    callback(new Error(`CORS: Origin ${origin} not allowed`));
+    return callback(null, true);
   },
   methods: ["POST", "GET"],
   allowedHeaders: ["Content-Type", "Authorization"],
