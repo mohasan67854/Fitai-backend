@@ -50,7 +50,7 @@ app.post("/api/ai/chat", async (req, res) => {
         "Authorization": `Bearer ${apiKey}`,
       },
       body: JSON.stringify({
-        model: "gpt-3.5-turbo",
+        model: ""gpt-4o-mini"",
         max_tokens: Math.min(maxTokens, 2000),
         messages: messages.map(m => ({
           role: m.role,
