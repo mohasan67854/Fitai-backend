@@ -24,7 +24,7 @@ app.post("/api/ai/chat", async (req, res) => {
   const apiKey = process.env.OPENROUTER_API_KEY;
   if (!apiKey) return res.status(500).json({ error: "Server misconfigured: API key not set." });
 
-  const { messages, maxTokens = 1000 } = req.body;
+  const { messages, maxTokens = 10000 } = req.body;
   if (!messages || !Array.isArray(messages)) return res.status(400).json({ error: "Invalid request." });
 
   try {
@@ -37,8 +37,8 @@ app.post("/api/ai/chat", async (req, res) => {
         "X-Title": "FitAI",
       },
       body: JSON.stringify({
-        model: "openai/gpt-5.2",
-        max_tokens: Math.min(maxTokens, 2000),
+        model: "Varcee-ai/trinity-large-preview:free",
+        max_tokens: Math.min(maxTokens, 2000000),
         messages: messages.map(m => ({
           role: m.role,
           content: Array.isArray(m.content)
