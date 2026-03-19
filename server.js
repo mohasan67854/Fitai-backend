@@ -41,7 +41,7 @@ app.post("/api/ai/chat", async (req, res) => {
         "X-Title": "FitAI",
       },
       body: JSON.stringify({
-        model: "deepseek/deepseek-r1:free",
+        model: "google/gemma-3-27b-it:free",
         max_tokens: Math.min(maxTokens, 2048),
         messages: messages.map((m) => ({
           role: m.role,
