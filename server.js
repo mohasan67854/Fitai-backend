@@ -11,46 +11,33 @@ app.use(express.json({ limit: "10mb" }));
 app.use(cors({ origin: "*" }));
 
 const limiter = rateLimit({
-  windowMs: 60 * 1000,
-  max: 20,
-  message: { error: "Too many requests. Please wait." },
+  windowMs: 60 * 1000, max: 20,
+  message: { error: "Too many requests." },
 });
-
-const strictLimiter = rateLimit({
-  windowMs: 60 * 60 * 1000,
-  max: 50,
-  message: { error: "Hourly limit reached." },
-});
-
 app.use("/api/", limiter);
-app.use("/api/ai/", strictLimiter);
 
 app.get("/health", (req, res) => {
   res.json({ status: "ok", timestamp: new Date().toISOString(), version: "1.0.0" });
 });
 
 app.post("/api/ai/chat", async (req, res) => {
-  const apiKey = process.env.AI_API_KEY;
-
-  if (!apiKey) {
-    return res.status(500).json({ error: "Server misconfigured: API key not set." });
-  }
+  const apiKey = process.env.OPENROUTER_API_KEY;
+  if (!apiKey) return res.status(500).json({ error: "Server misconfigured: API key not set." });
 
   const { messages, maxTokens = 1000 } = req.body;
-
-  if (!messages || !Array.isArray(messages) || messages.length === 0) {
-    return res.status(400).json({ error: "Invalid request: messages array required." });
-  }
+  if (!messages || !Array.isArray(messages)) return res.status(400).json({ error: "Invalid request." });
 
   try {
-    const response = await fetch("https://api.ai.cc/v1/chat/completions", {
+    const response = await fetch("https://openrouter.ai/api/v1/chat/completions", {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
         "Authorization": `Bearer ${apiKey}`,
+        "HTTP-Referer": "https://fitai-psi.vercel.app",
+        "X-Title": "FitAI",
       },
       body: JSON.stringify({
-        model: ""gpt-4o-mini"",
+        model: "meta-llama/llama-3.1-8b-instruct:free",
         max_tokens: Math.min(maxTokens, 2000),
         messages: messages.map(m => ({
           role: m.role,
@@ -62,8 +49,8 @@ app.post("/api/ai/chat", async (req, res) => {
     });
 
     if (!response.ok) {
-      const errorData = await response.json().catch(() => ({}));
-      return res.status(response.status).json({ error: errorData?.error?.message || "AI API error" });
+      const err = await response.json().catch(() => ({}));
+      return res.status(response.status).json({ error: err?.error?.message || "AI API error" });
     }
 
     const data = await response.json();
@@ -71,16 +58,13 @@ app.post("/api/ai/chat", async (req, res) => {
     res.json({ content: [{ text }] });
 
   } catch (err) {
-    console.error("Proxy error:", err.message);
-    res.status(500).json({ error: "AI service temporarily unavailable." });
+    res.status(500).json({ error: "AI service unavailable." });
   }
 });
 
-app.use((req, res) => {
-  res.status(404).json({ error: "Not found" });
-});
+app.use((req, res) => res.status(404).json({ error: "Not found" }));
 
 app.listen(PORT, () => {
-  console.log(`FitAI proxy running on port ${PORT}`);
-  console.log(`API key loaded: ${process.env.AI_API_KEY ? "YES" : "NO"}`);
+  console.log(`FitAI running on port ${PORT}`);
+  console.log(`OpenRouter key: ${process.env.OPENROUTER_API_KEY ? "YES ✓" : "NO ✗"}`);
 });
