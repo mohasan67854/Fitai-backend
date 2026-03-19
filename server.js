@@ -5,7 +5,7 @@ const helmet = require("helmet");
 const app = express();
 const PORT = process.env.PORT || 3001;
 
-// ✅ trust Railway's proxy so express-rate-limit works correctly
+// trust Railway's proxy so express-rate-limit works correctly
 app.set("trust proxy", 1);
 
 app.use(helmet());
@@ -24,7 +24,7 @@ app.get("/health", (req, res) => {
 });
 
 app.post("/api/ai/chat", async (req, res) => {
-  const apiKey = process.env.OPENROUTER_API_KEY;
+  const apiKey = process.env.GROQ_API_KEY;
   if (!apiKey) return res.status(500).json({ error: "Server misconfigured: API key not set." });
 
   const { messages, maxTokens = 800 } = req.body;
@@ -32,17 +32,15 @@ app.post("/api/ai/chat", async (req, res) => {
     return res.status(400).json({ error: "Invalid request." });
 
   try {
-    const response = await fetch("https://openrouter.ai/api/v1/chat/completions", {
+    const response = await fetch("https://api.groq.com/openai/v1/chat/completions", {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
         "Authorization": `Bearer ${apiKey}`,
-        "HTTP-Referer": "https://fitai-psi.vercel.app",
-        "X-Title": "FitAI",
       },
       body: JSON.stringify({
-        model: "google/gemma-3-27b-it:free",
-        max_tokens: Math.min(maxTokens, 204800),
+        model: "llama-3.3-70b-versatile",  // Llama 3.3 70B on Groq — free & fast
+        max_tokens: Math.min(maxTokens, 2048),
         messages: messages.map((m) => ({
           role: m.role,
           content: Array.isArray(m.content)
@@ -54,7 +52,7 @@ app.post("/api/ai/chat", async (req, res) => {
 
     if (!response.ok) {
       const err = await response.json().catch(() => ({}));
-      console.error("OpenRouter error:", JSON.stringify(err));
+      console.error("Groq error:", JSON.stringify(err));
       return res.status(response.status).json({ error: err?.error?.message || "AI API error" });
     }
 
@@ -71,5 +69,5 @@ app.use((req, res) => res.status(404).json({ error: "Not found" }));
 
 app.listen(PORT, () => {
   console.log(`FitAI running on port ${PORT}`);
-  console.log(`OpenRouter key: ${process.env.OPENROUTER_API_KEY ? "YES ✓" : "NO ✗"}`);
+  console.log(`Groq key: ${process.env.GROQ_API_KEY ? "YES ✓" : "NO ✗"}`);
 });
