@@ -37,7 +37,7 @@ app.post("/api/ai/chat", async (req, res) => {
         "X-Title": "FitAI",
       },
       body: JSON.stringify({
-        model: "mistralai/mistral-7b-instruct:free",
+        model: "openai/gpt-5.2",
         max_tokens: Math.min(maxTokens, 2000),
         messages: messages.map(m => ({
           role: m.role,
