@@ -1,153 +1,132 @@
 // ─────────────────────────────────────────────────────────────────────────────
 // FitAI Elite — Backend Proxy Server v2.0
 // Railway environment variables needed:
-//   ANTHROPIC_API_KEY   = sk-ant-xxxx
-//   FRONTEND_URL        = https://fitai-psi.vercel.app
-//   SUPABASE_URL        = https://xxxx.supabase.co
-//   SUPABASE_ANON_KEY   = eyJ...
+//   GROQ_API_KEY      = gsk_xxxx  (from console.groq.com)
+//   FRONTEND_URL      = https://fitai-psi.vercel.app
+//   SUPABASE_URL      = https://cgmqbsbiynmjexztputm.supabase.co
+//   SUPABASE_ANON_KEY = eyJ...
 // ─────────────────────────────────────────────────────────────────────────────
 
-const express    = require("express");
-const cors       = require("cors");
-const rateLimit  = require("express-rate-limit");
-const helmet     = require("helmet");
-const crypto     = require("crypto");
+const express   = require("express");
+const cors      = require("cors");
+const rateLimit = require("express-rate-limit");
+const helmet    = require("helmet");
+const crypto    = require("crypto");
 
 const app  = express();
 const PORT = process.env.PORT || 3001;
 
-// ── Supabase client (server-side) ─────────────────────────────────────────────
+// Trust Railway's proxy so rate limiting works correctly
+app.set("trust proxy", 1);
+
+// ── Supabase REST helper ──────────────────────────────────────────────────────
 const SUPABASE_URL = process.env.SUPABASE_URL;
 const SUPABASE_KEY = process.env.SUPABASE_ANON_KEY;
 
 const sbFetch = async (path, opts = {}) => {
-  const res = await fetch(`${SUPABASE_URL}/rest/v1${path}`, {
-    ...opts,
-    headers: {
-      "Content-Type":  "application/json",
-      "apikey":        SUPABASE_KEY,
-      "Authorization": `Bearer ${SUPABASE_KEY}`,
-      "Prefer":        "return=representation",
-      ...(opts.headers || {}),
-    },
-  });
-  const data = await res.json().catch(() => ({}));
-  return { ok: res.ok, status: res.status, data };
+  if (!SUPABASE_URL || !SUPABASE_KEY) return { ok: false, data: null };
+  try {
+    const res = await fetch(`${SUPABASE_URL}/rest/v1${path}`, {
+      ...opts,
+      headers: {
+        "Content-Type":  "application/json",
+        "apikey":        SUPABASE_KEY,
+        "Authorization": `Bearer ${SUPABASE_KEY}`,
+        "Prefer":        "return=representation",
+        ...(opts.headers || {}),
+      },
+    });
+    const data = await res.json().catch(() => ({}));
+    return { ok: res.ok, data };
+  } catch { return { ok: false, data: null }; }
 };
 
 // ── Security ──────────────────────────────────────────────────────────────────
 app.use(helmet());
 app.use(express.json({ limit: "2mb" }));
-
-const ALLOWED_ORIGINS = [
-  "http://localhost:5173",
-  "http://localhost:3000",
-  process.env.FRONTEND_URL,
-].filter(Boolean);
-
-app.use(cors({
-  origin: (origin, cb) => {
-    if (!origin) return cb(null, true);
-    if (ALLOWED_ORIGINS.includes(origin)) return cb(null, true);
-    cb(new Error(`CORS: ${origin} not allowed`));
-  },
-  methods:      ["POST", "GET", "PATCH"],
-  allowedHeaders: ["Content-Type", "Authorization", "x-fitai-token"],
-}));
+app.use(cors({ origin: "*" }));
 
 // ── Rate limiting ─────────────────────────────────────────────────────────────
-app.use("/api/", rateLimit({ windowMs: 60000, max: 30,
-  message: { error: "Too many requests. Please wait." } }));
-app.use("/api/ai/", rateLimit({ windowMs: 3600000, max: 60,
-  message: { error: "Hourly AI limit reached." } }));
+app.use("/api/", rateLimit({
+  windowMs: 60 * 1000, max: 30,
+  message: { error: "Too many requests. Please wait." }
+}));
+app.use("/api/ai/", rateLimit({
+  windowMs: 60 * 60 * 1000, max: 60,
+  message: { error: "Hourly AI limit reached." }
+}));
 
-// ── Token helpers (simple HMAC — no JWT library needed) ──────────────────────
-const SECRET = process.env.ANTHROPIC_API_KEY || "fitai-secret-2025";
-const signToken   = email => crypto.createHmac("sha256", SECRET).update(email + ":fitai").digest("hex");
-const verifyToken = (email, token) => token === signToken(email);
+// ── Token helpers (HMAC — no extra library needed) ────────────────────────────
+const SECRET    = process.env.GROQ_API_KEY || "fitai-secret-2025";
+const signToken = email => crypto.createHmac("sha256", SECRET).update(email + ":fitai").digest("hex");
+const verifyTok = (email, token) => token === signToken(email);
 
 // ── Health check ──────────────────────────────────────────────────────────────
-app.get("/health", (_, res) => res.json({ status: "ok", version: "2.0.0" }));
+app.get("/health", (_, res) => res.json({
+  status: "ok",
+  timestamp: new Date().toISOString(),
+  version: "2.0.0",
+  groq: process.env.GROQ_API_KEY ? "✓" : "✗",
+  supabase: SUPABASE_URL ? "✓" : "✗ (offline mode)",
+}));
 
-// ── USER: Login / Register ────────────────────────────────────────────────────
+// ─────────────────────────────────────────────────────────────────────────────
+// USER ROUTES
+// ─────────────────────────────────────────────────────────────────────────────
+
 // POST /api/user/login  { email, name }
-// Returns: { token, user }
 app.post("/api/user/login", async (req, res) => {
   const { email, name } = req.body;
   if (!email || !email.includes("@"))
     return res.status(400).json({ error: "Valid email required" });
 
-  if (!SUPABASE_URL || !SUPABASE_KEY)
-    return res.status(200).json({ token: signToken(email), user: { email, name, xp: 0, streak: 0, is_premium: false } });
+  const token = signToken(email);
+
+  // If Supabase not configured, return local token only
+  if (!SUPABASE_URL)
+    return res.json({ token, user: { email, name: name||email.split("@")[0], xp:0, streak:0, is_premium:false } });
 
   // Check if user exists
-  const { data: existing } = await sbFetch(`/users?email=eq.${encodeURIComponent(email)}&select=*`);
-  const user = Array.isArray(existing) ? existing[0] : null;
+  const { data: rows } = await sbFetch(`/users?email=eq.${encodeURIComponent(email)}&select=*`);
+  const existing = Array.isArray(rows) ? rows[0] : null;
 
-  if (user) {
-    return res.json({ token: signToken(email), user });
+  if (existing) {
+    // Check trial expiry
+    if (existing.is_premium && existing.trial_end && Date.now() > existing.trial_end) {
+      await sbFetch(`/users?email=eq.${encodeURIComponent(email)}`, {
+        method: "PATCH", body: JSON.stringify({ is_premium: false, trial_end: 0 })
+      });
+      existing.is_premium = false;
+    }
+    return res.json({ token, user: existing });
   }
 
   // Create new user
-  const { ok, data: created } = await sbFetch("/users", {
-    method:  "POST",
-    body: JSON.stringify({ email, name: name || email.split("@")[0], xp: 0, streak: 0, streak_last_date: "", is_premium: false, trial_end: 0 }),
+  const { data: created } = await sbFetch("/users", {
+    method: "POST",
+    body: JSON.stringify({
+      email, name: name || email.split("@")[0],
+      xp: 0, streak: 0, streak_last_date: "",
+      is_premium: false, trial_end: 0
+    }),
   });
-  if (!ok) return res.status(500).json({ error: "Could not create user" });
-  const newUser = Array.isArray(created) ? created[0] : created;
-  res.json({ token: signToken(email), user: newUser });
+  const newUser = Array.isArray(created) ? created[0] : { email, name, xp:0, streak:0, is_premium:false };
+  res.json({ token, user: newUser });
 });
 
-// ── USER: Get profile ─────────────────────────────────────────────────────────
-app.get("/api/user/me", async (req, res) => {
-  const email = req.query.email;
-  const token = req.headers["x-fitai-token"];
-  if (!email || !verifyToken(email, token))
-    return res.status(401).json({ error: "Unauthorized" });
-
-  const { data } = await sbFetch(`/users?email=eq.${encodeURIComponent(email)}&select=*`);
-  const user = Array.isArray(data) ? data[0] : null;
-  if (!user) return res.status(404).json({ error: "User not found" });
-
-  // Check trial expiry
-  if (user.is_premium && user.trial_end && Date.now() > user.trial_end) {
-    await sbFetch(`/users?email=eq.${encodeURIComponent(email)}`, {
-      method: "PATCH", body: JSON.stringify({ is_premium: false, trial_end: 0 }),
-    });
-    user.is_premium = false;
-  }
-  res.json({ user });
-});
-
-// ── USER: Update XP ───────────────────────────────────────────────────────────
-app.post("/api/user/xp", async (req, res) => {
-  const { email, amount } = req.body;
-  const token = req.headers["x-fitai-token"];
-  if (!email || !verifyToken(email, token))
-    return res.status(401).json({ error: "Unauthorized" });
-  if (!amount || amount < 0 || amount > 500)
-    return res.status(400).json({ error: "Invalid XP amount" });
-
-  const { data: existing } = await sbFetch(`/users?email=eq.${encodeURIComponent(email)}&select=xp`);
-  const cur = Array.isArray(existing) ? existing[0]?.xp || 0 : 0;
-  const newXp = cur + amount;
-
-  await sbFetch(`/users?email=eq.${encodeURIComponent(email)}`, {
-    method: "PATCH", body: JSON.stringify({ xp: newXp }),
-  });
-  res.json({ xp: newXp });
-});
-
-// ── USER: Update streak ───────────────────────────────────────────────────────
+// POST /api/user/streak  { email }
 app.post("/api/user/streak", async (req, res) => {
   const { email } = req.body;
   const token = req.headers["x-fitai-token"];
-  if (!email || !verifyToken(email, token))
+  if (!email || !verifyTok(email, token))
     return res.status(401).json({ error: "Unauthorized" });
 
-  const { data: existing } = await sbFetch(`/users?email=eq.${encodeURIComponent(email)}&select=streak,streak_last_date`);
-  const cur = Array.isArray(existing) ? existing[0] : { streak: 0, streak_last_date: "" };
   const today = new Date().toDateString();
+
+  if (!SUPABASE_URL) return res.json({ streak: 1, changed: false });
+
+  const { data: rows } = await sbFetch(`/users?email=eq.${encodeURIComponent(email)}&select=streak,streak_last_date`);
+  const cur = Array.isArray(rows) ? rows[0] : { streak: 0, streak_last_date: "" };
 
   if (cur.streak_last_date === today)
     return res.json({ streak: cur.streak, changed: false });
@@ -157,41 +136,71 @@ app.post("/api/user/streak", async (req, res) => {
   const newStreak = diff < 2 ? (cur.streak || 0) + 1 : 1;
 
   await sbFetch(`/users?email=eq.${encodeURIComponent(email)}`, {
-    method: "PATCH", body: JSON.stringify({ streak: newStreak, streak_last_date: today }),
+    method: "PATCH",
+    body: JSON.stringify({ streak: newStreak, streak_last_date: today }),
   });
   res.json({ streak: newStreak, changed: true });
 });
 
-// ── USER: Activate trial ──────────────────────────────────────────────────────
+// POST /api/user/xp  { email, amount }
+app.post("/api/user/xp", async (req, res) => {
+  const { email, amount } = req.body;
+  const token = req.headers["x-fitai-token"];
+  if (!email || !verifyTok(email, token))
+    return res.status(401).json({ error: "Unauthorized" });
+  if (!amount || amount < 0 || amount > 500)
+    return res.status(400).json({ error: "Invalid XP amount" });
+
+  if (!SUPABASE_URL) return res.json({ xp: amount });
+
+  const { data: rows } = await sbFetch(`/users?email=eq.${encodeURIComponent(email)}&select=xp`);
+  const curXp = Array.isArray(rows) ? (rows[0]?.xp || 0) : 0;
+  const newXp  = curXp + amount;
+
+  await sbFetch(`/users?email=eq.${encodeURIComponent(email)}`, {
+    method: "PATCH", body: JSON.stringify({ xp: newXp }),
+  });
+  res.json({ xp: newXp });
+});
+
+// POST /api/user/trial  { email }
 app.post("/api/user/trial", async (req, res) => {
   const { email } = req.body;
   const token = req.headers["x-fitai-token"];
-  if (!email || !verifyToken(email, token))
+  if (!email || !verifyTok(email, token))
     return res.status(401).json({ error: "Unauthorized" });
 
-  // Check if already used trial
-  const { data: existing } = await sbFetch(`/users?email=eq.${encodeURIComponent(email)}&select=trial_end,is_premium`);
-  const user = Array.isArray(existing) ? existing[0] : null;
-  if (user?.trial_end && user.trial_end > 0)
-    return res.status(400).json({ error: "Trial already used" });
+  if (!SUPABASE_URL) {
+    const trialEnd = Date.now() + 3 * 24 * 60 * 60 * 1000;
+    return res.json({ is_premium: true, trial_end: trialEnd });
+  }
 
-  const trialEnd = Date.now() + 3 * 24 * 60 * 60 * 1000; // 3 days
+  const { data: rows } = await sbFetch(`/users?email=eq.${encodeURIComponent(email)}&select=trial_end`);
+  const cur = Array.isArray(rows) ? rows[0] : null;
+
+  // Block if trial was already used (trial_end > 0 means it was set before)
+  if (cur?.trial_end && cur.trial_end > 0)
+    return res.status(400).json({ error: "Free trial already used for this account." });
+
+  const trialEnd = Date.now() + 3 * 24 * 60 * 60 * 1000;
   await sbFetch(`/users?email=eq.${encodeURIComponent(email)}`, {
-    method: "PATCH", body: JSON.stringify({ is_premium: true, trial_end: trialEnd }),
+    method: "PATCH",
+    body: JSON.stringify({ is_premium: true, trial_end: trialEnd }),
   });
   res.json({ is_premium: true, trial_end: trialEnd });
 });
 
-// ── WEIGHT: Save weight entry ─────────────────────────────────────────────────
+// POST /api/user/weight  { email, weight, date }
 app.post("/api/user/weight", async (req, res) => {
   const { email, weight, date } = req.body;
   const token = req.headers["x-fitai-token"];
-  if (!email || !verifyToken(email, token))
+  if (!email || !verifyTok(email, token))
     return res.status(401).json({ error: "Unauthorized" });
   if (!weight || weight < 20 || weight > 400)
     return res.status(400).json({ error: "Invalid weight" });
 
-  // Store in a weight_logs table
+  if (!SUPABASE_URL) return res.json({ ok: true });
+
   await sbFetch("/weight_logs", {
     method: "POST",
     body: JSON.stringify({ email, weight: parseFloat(weight), date: date || new Date().toDateString() }),
@@ -199,61 +208,76 @@ app.post("/api/user/weight", async (req, res) => {
   res.json({ ok: true });
 });
 
-// ── WEIGHT: Get weight history ────────────────────────────────────────────────
+// GET /api/user/weight?email=xxx
 app.get("/api/user/weight", async (req, res) => {
   const { email } = req.query;
   const token = req.headers["x-fitai-token"];
-  if (!email || !verifyToken(email, token))
+  if (!email || !verifyTok(email, token))
     return res.status(401).json({ error: "Unauthorized" });
+
+  if (!SUPABASE_URL) return res.json({ logs: [] });
 
   const { data } = await sbFetch(`/weight_logs?email=eq.${encodeURIComponent(email)}&order=date.asc&select=*`);
   res.json({ logs: Array.isArray(data) ? data : [] });
 });
 
-// ── AI CHAT ───────────────────────────────────────────────────────────────────
+// ─────────────────────────────────────────────────────────────────────────────
+// AI CHAT — Uses Groq (free & fast)
+// ─────────────────────────────────────────────────────────────────────────────
 app.post("/api/ai/chat", async (req, res) => {
-  const apiKey = process.env.ANTHROPIC_API_KEY;
+  const apiKey = process.env.GROQ_API_KEY;
   if (!apiKey)
-    return res.status(500).json({ error: "Server misconfigured: API key missing" });
+    return res.status(500).json({ error: "Server misconfigured: API key not set." });
 
-  const { messages, maxTokens = 700 } = req.body;
-  if (!messages || !Array.isArray(messages) || messages.length === 0)
-    return res.status(400).json({ error: "messages array required" });
+  const { messages, maxTokens = 800 } = req.body;
+  if (!messages || !Array.isArray(messages))
+    return res.status(400).json({ error: "Invalid request." });
   if (JSON.stringify(messages).length > 200000)
-    return res.status(400).json({ error: "Request too large" });
+    return res.status(400).json({ error: "Request too large." });
 
   try {
-    const response = await fetch("https://api.anthropic.com/v1/messages", {
+    const response = await fetch("https://api.groq.com/openai/v1/chat/completions", {
       method: "POST",
       headers: {
-        "Content-Type":      "application/json",
-        "x-api-key":         apiKey,
-        "anthropic-version": "2023-06-01",
+        "Content-Type":  "application/json",
+        "Authorization": `Bearer ${apiKey}`,
       },
       body: JSON.stringify({
-        model:      "claude-sonnet-4-20250514",
-        max_tokens: Math.min(maxTokens, 800),
-        messages,
+        model:      "llama-3.3-70b-versatile",
+        max_tokens: Math.min(maxTokens, 2048),
+        messages: messages.map(m => ({
+          role: m.role,
+          content: Array.isArray(m.content)
+            ? m.content.find(c => c.type === "text")?.text || ""
+            : m.content,
+        })),
       }),
     });
 
     if (!response.ok) {
-      const e = await response.json().catch(() => ({}));
-      return res.status(response.status).json({ error: e?.error?.message || `AI error ${response.status}` });
+      const err = await response.json().catch(() => ({}));
+      console.error("Groq error:", JSON.stringify(err));
+      return res.status(response.status).json({ error: err?.error?.message || "AI API error" });
     }
+
     const data = await response.json();
-    res.json({ content: data.content });
+    const text = data.choices?.[0]?.message?.content || "";
+    // Return in Anthropic-compatible format so frontend works unchanged
+    res.json({ content: [{ text }] });
+
   } catch (err) {
+    console.error("AI error:", err.message);
     res.status(500).json({ error: "AI service unavailable. Try again." });
   }
 });
 
-// ── 404 + error handler ───────────────────────────────────────────────────────
-app.use((_, res)        => res.status(404).json({ error: "Not found" }));
-app.use((err, _, res)   => res.status(500).json({ error: err.message }));
+// ─────────────────────────────────────────────────────────────────────────────
+app.use((_, res)      => res.status(404).json({ error: "Not found" }));
+app.use((err, _, res) => res.status(500).json({ error: err.message }));
 
 app.listen(PORT, () => {
-  console.log(`✅ FitAI server v2.0 on port ${PORT}`);
-  console.log(`   AI key:    ${process.env.ANTHROPIC_API_KEY ? "✓" : "✗ MISSING"}`);
-  console.log(`   Supabase:  ${SUPABASE_URL ? "✓" : "✗ MISSING (local fallback active)"}`);
+  console.log(`✅ FitAI Elite server v2.0 on port ${PORT}`);
+  console.log(`   Groq:      ${process.env.GROQ_API_KEY      ? "✓ connected" : "✗ MISSING — set GROQ_API_KEY"}`);
+  console.log(`   Supabase:  ${SUPABASE_URL                  ? "✓ connected" : "✗ not set (offline mode active)"}`);
+  console.log(`   Frontend:  ${process.env.FRONTEND_URL      || "not set (CORS open)"}`);
 });
